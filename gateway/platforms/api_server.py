@@ -3830,10 +3830,19 @@ class APIServerAdapter(BasePlatformAdapter):
                     conversation_history=conversation_history,
                     task_id=effective_task_id,
                 )
+                # input_tokens is cache-inclusive; the extra cache_* and
+                # uncached_input_tokens keys let the Isol8 backend meter
+                # cache-aware cost. Bridge fields until a main-derived pin
+                # (upstream main already carries them).
+                _prompt_tokens = getattr(agent, "session_prompt_tokens", 0) or 0
+                _cache_read_tokens = int(getattr(agent, "session_cache_read_tokens", 0) or 0)
                 usage = {
-                    "input_tokens": getattr(agent, "session_prompt_tokens", 0) or 0,
+                    "input_tokens": _prompt_tokens,
                     "output_tokens": getattr(agent, "session_completion_tokens", 0) or 0,
                     "total_tokens": getattr(agent, "session_total_tokens", 0) or 0,
+                    "cache_read_tokens": _cache_read_tokens,
+                    "cache_write_tokens": int(getattr(agent, "session_cache_write_tokens", 0) or 0),
+                    "uncached_input_tokens": max(0, int(_prompt_tokens) - _cache_read_tokens),
                 }
                 # Include the effective session ID in the result so callers
                 # (e.g. X-Hermes-Session-Id header) can track compression-
@@ -4114,10 +4123,19 @@ class APIServerAdapter(BasePlatformAdapter):
                                     clear_session_vars(session_tokens)
                                 except Exception:
                                     pass
+                    # input_tokens is cache-inclusive; the extra cache_* and
+                    # uncached_input_tokens keys let the Isol8 backend meter
+                    # cache-aware cost. Bridge fields until a main-derived pin
+                    # (upstream main already carries them).
+                    _prompt_tokens = getattr(agent, "session_prompt_tokens", 0) or 0
+                    _cache_read_tokens = int(getattr(agent, "session_cache_read_tokens", 0) or 0)
                     u = {
-                        "input_tokens": getattr(agent, "session_prompt_tokens", 0) or 0,
+                        "input_tokens": _prompt_tokens,
                         "output_tokens": getattr(agent, "session_completion_tokens", 0) or 0,
                         "total_tokens": getattr(agent, "session_total_tokens", 0) or 0,
+                        "cache_read_tokens": _cache_read_tokens,
+                        "cache_write_tokens": int(getattr(agent, "session_cache_write_tokens", 0) or 0),
+                        "uncached_input_tokens": max(0, int(_prompt_tokens) - _cache_read_tokens),
                     }
                     return r, u
 

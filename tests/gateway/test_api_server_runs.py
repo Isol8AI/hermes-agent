@@ -227,6 +227,47 @@ class TestRunStatus:
                 assert status["last_event"] == "run.completed"
 
     @pytest.mark.asyncio
+    async def test_status_usage_includes_cache_aware_fields(self, adapter):
+        """Completed-run usage exposes the Isol8 cache-metering fields.
+
+        ``input_tokens`` (= session_prompt_tokens) is cache-INCLUSIVE, so the
+        backend also needs cache_read_tokens / cache_write_tokens and a
+        non-cache-inclusive ``uncached_input_tokens`` to price a run correctly.
+        """
+        app = _create_runs_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(adapter, "_create_agent") as mock_create:
+                mock_agent = MagicMock()
+                mock_agent.run_conversation.return_value = {"final_response": "done"}
+                mock_agent.session_prompt_tokens = 10  # cache-inclusive
+                mock_agent.session_completion_tokens = 5
+                mock_agent.session_total_tokens = 15
+                mock_agent.session_cache_read_tokens = 3
+                mock_agent.session_cache_write_tokens = 7
+                mock_create.return_value = mock_agent
+
+                resp = await cli.post("/v1/runs", json={"input": "hello"})
+                run_id = (await resp.json())["run_id"]
+
+                for _ in range(20):
+                    status_resp = await cli.get(f"/v1/runs/{run_id}")
+                    status = await status_resp.json()
+                    if status["status"] == "completed":
+                        break
+                    await asyncio.sleep(0.05)
+
+                assert status["status"] == "completed"
+                usage = status["usage"]
+                # Existing (cache-inclusive) field is untouched.
+                assert usage["input_tokens"] == 10
+                assert usage["total_tokens"] == 15
+                # New cache-aware fields.
+                assert usage["cache_read_tokens"] == 3
+                assert usage["cache_write_tokens"] == 7
+                # 10 prompt tokens, 3 of which were cache reads -> 7 uncached.
+                assert usage["uncached_input_tokens"] == 7
+
+    @pytest.mark.asyncio
     async def test_status_reflects_explicit_session_id(self, adapter):
         app = _create_runs_app(adapter)
         async with TestClient(TestServer(app)) as cli:

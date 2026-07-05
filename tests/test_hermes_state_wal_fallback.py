@@ -81,6 +81,42 @@ class TestApplyWalWithFallback:
         assert cur.fetchone()[0].lower() == "wal"
         conn.close()
 
+    def test_env_forces_delete_journal_mode(self, tmp_path, monkeypatch):
+        """HERMES_SQLITE_JOURNAL_MODE=delete forces the NFS-safe rollback
+        journal even on a WAL-capable local filesystem (EFS override)."""
+        monkeypatch.setenv("HERMES_SQLITE_JOURNAL_MODE", "delete")
+        conn = sqlite3.connect(str(tmp_path / "forced.db"), isolation_level=None)
+        mode = apply_wal_with_fallback(conn)
+        assert mode == "delete"
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "delete"
+        # DB is still usable for real writes in DELETE mode.
+        conn.execute("CREATE TABLE t (x INTEGER)")
+        conn.execute("INSERT INTO t VALUES (1)")
+        assert list(conn.execute("SELECT x FROM t"))[0][0] == 1
+        conn.close()
+
+    def test_env_delete_is_case_insensitive(self, tmp_path, monkeypatch):
+        """The env knob matches case-insensitively (``DELETE`` == ``delete``)."""
+        monkeypatch.setenv("HERMES_SQLITE_JOURNAL_MODE", "DELETE")
+        conn = sqlite3.connect(str(tmp_path / "forced-upper.db"), isolation_level=None)
+        assert apply_wal_with_fallback(conn) == "delete"
+        conn.close()
+
+    def test_env_unset_leaves_wal_on_local_fs(self, tmp_path, monkeypatch):
+        """Without the env knob, WAL is still selected on a normal filesystem."""
+        monkeypatch.delenv("HERMES_SQLITE_JOURNAL_MODE", raising=False)
+        conn = sqlite3.connect(str(tmp_path / "default.db"), isolation_level=None)
+        assert apply_wal_with_fallback(conn) == "wal"
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+        conn.close()
+
+    def test_env_other_value_does_not_force_delete(self, tmp_path, monkeypatch):
+        """A non-'delete' value is ignored — WAL selection is unchanged."""
+        monkeypatch.setenv("HERMES_SQLITE_JOURNAL_MODE", "wal")
+        conn = sqlite3.connect(str(tmp_path / "ignored.db"), isolation_level=None)
+        assert apply_wal_with_fallback(conn) == "wal"
+        conn.close()
+
     def test_falls_back_to_delete_on_locking_protocol(self, tmp_path, caplog):
         """NFS-style ``locking protocol`` error → DELETE mode + one WARNING."""
         conn, _ = _open_blocking(tmp_path / "nfs.db", isolation_level=None)

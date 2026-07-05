@@ -17,6 +17,7 @@ Key design decisions:
 import asyncio
 import json
 import logging
+import os
 import random
 import re
 import sqlite3
@@ -363,6 +364,10 @@ def apply_wal_with_fallback(
 
     Never downgrades to DELETE if the on-disk DB header reports WAL — see _on_disk_journal_mode.
     """
+    # Force the NFS-safe rollback journal on EFS when explicitly requested.
+    if os.getenv("HERMES_SQLITE_JOURNAL_MODE", "").lower() == "delete":
+        conn.execute("PRAGMA journal_mode=DELETE")
+        return "delete"
     # Read-only probe — no flock, no checkpoint, no WAL/SHM unlink.
     # Skipping the set-pragma prevents WAL-init from unlinking files other connections hold open.
     try:
